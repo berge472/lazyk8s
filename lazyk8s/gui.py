@@ -908,27 +908,70 @@ class LazyK8sApp(App):
         except Exception:
             pass
 
+    def on_key(self, event) -> None:
+        """Handle key presses for custom navigation"""
+        key = event.key
+        pods_list = self.query_one("#pods-list", ListView)
+        containers_list = self.query_one("#containers-list", ListView)
+
+        # When pods panel is focused
+        if self.focused == pods_list:
+            # Left/right arrows cycle through containers
+            if key in ["left", "right"]:
+                if len(containers_list) > 0:
+                    if key == "right":
+                        containers_list.action_cursor_down()
+                    else:  # left
+                        containers_list.action_cursor_up()
+                    event.prevent_default()
+                    event.stop()
+                    return
+
+            # Space toggles container logs
+            elif key == "space":
+                self.action_toggle_container()
+                event.prevent_default()
+                event.stop()
+                return
+
+        # When logs container has focus (check if focused widget is inside logs container)
+        try:
+            logs_tabs = self.query_one("#logs-tabs", TabbedContent)
+            logs_container = self.query_one("#logs-container")
+
+            # Check if the focused widget is the TabbedContent or any of its children
+            if self.focused == logs_tabs or (self.focused and self.focused in logs_tabs.query("*")):
+                if key in ["left", "right"]:
+                    if key == "left":
+                        self.action_scroll_log_left()
+                    else:
+                        self.action_scroll_log_right()
+                    event.prevent_default()
+                    event.stop()
+                    return
+        except Exception:
+            pass
+
     def action_toggle_container(self) -> None:
         """Toggle container log visibility (Space key)"""
-        # Only work when containers list is focused
         containers_list = self.query_one("#containers-list", ListView)
-        if self.focused == containers_list:
-            # Get the highlighted item
-            if containers_list.highlighted_child and isinstance(containers_list.highlighted_child, ContainerItem):
-                item = containers_list.highlighted_child
-                container_name = item.container_name
 
-                # Toggle container in active set
-                if container_name in self.active_containers:
-                    self.active_containers.discard(container_name)
-                else:
-                    self.active_containers.add(container_name)
+        # Get the highlighted item from containers list
+        if containers_list.highlighted_child and isinstance(containers_list.highlighted_child, ContainerItem):
+            item = containers_list.highlighted_child
+            container_name = item.container_name
 
-                # Update the item's visual state
-                item.update_active_state(container_name in self.active_containers)
+            # Toggle container in active set
+            if container_name in self.active_containers:
+                self.active_containers.discard(container_name)
+            else:
+                self.active_containers.add(container_name)
 
-                # Refresh logs to show/hide this container's logs
-                self.show_pod_logs()
+            # Update the item's visual state
+            item.update_active_state(container_name in self.active_containers)
+
+            # Refresh logs to show/hide this container's logs
+            self.show_pod_logs()
 
     def action_toggle_follow(self) -> None:
         """Toggle log following"""
@@ -975,8 +1018,14 @@ class LazyK8sApp(App):
 
         # Exit the TUI temporarily
         with self.suspend():
-            # Colorful banner
-            print(f"\033[36m→\033[0m \033[2mShell:\033[0m \033[33m{namespace}\033[0m:\033[32m{pod_name}\033[0m.\033[35m{container}\033[0m")
+            # Colorful banner with separator line
+            separator = "─" * 60
+            print(f"\033[36m{separator}\033[0m")
+            print(f"\033[36m→ \033[1;37mEntering Shell\033[0m")
+            print(f"  \033[2mNamespace:\033[0m \033[33m{namespace}\033[0m")
+            print(f"  \033[2mPod:\033[0m \033[32m{pod_name}\033[0m")
+            print(f"  \033[2mContainer:\033[0m \033[35m{container}\033[0m")
+            print(f"\033[36m{separator}\033[0m\n")
 
             for shell in ["/bin/bash", "/bin/sh", "/bin/ash"]:
                 try:
@@ -992,8 +1041,11 @@ class LazyK8sApp(App):
                 except Exception:
                     continue
 
-            # Colorful exit message
-            print(f"\n\033[36m←\033[0m \033[2mPress\033[0m \033[1;32mEnter\033[0m \033[2mto return to\033[0m \033[1;36mlazyk8s\033[0m\033[2m...\033[0m")
+            # Colorful exit message with separator
+            print(f"\n\033[36m{separator}\033[0m")
+            print(f"\033[36m← \033[1;37mExited Shell\033[0m")
+            print(f"\033[2mPress \033[0m\033[1;32mEnter\033[0m\033[2m to return to \033[0m\033[1;36mlazyk8s\033[0m\033[2m...\033[0m")
+            print(f"\033[36m{separator}\033[0m")
             input()
 
         # Refresh the display after returning

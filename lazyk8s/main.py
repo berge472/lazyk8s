@@ -1,54 +1,75 @@
 """Main entry point for lazyk8s CLI"""
 
 import sys
-import click
+import argparse
 from pathlib import Path
 
 from .config import AppConfig
 from .app import App
+from . import __version__
 
 
-DEFAULT_VERSION = "0.1.0"
+def init_args():
+    """Initialize argument parser"""
+    parser = argparse.ArgumentParser(
+        prog="lazyk8s",
+        description="lazyk8s - The lazier way to manage Kubernetes"
+    )
+
+    parser.add_argument(
+        "namespace",
+        nargs="?",
+        help="Initial namespace to select"
+    )
+
+    parser.add_argument(
+        "-d", "--debug",
+        action="store_true",
+        help="Enable debug mode"
+    )
+
+    parser.add_argument(
+        "-c", "--config",
+        action="store_true",
+        help="Print the default config"
+    )
+
+    parser.add_argument(
+        "--kubeconfig",
+        type=str,
+        help="Path to kubeconfig file"
+    )
+
+    parser.add_argument(
+        "-v", "--version",
+        action="version",
+        version=f"lazyk8s {__version__}"
+    )
+
+    return parser
 
 
-@click.command()
-@click.option(
-    "-d", "--debug",
-    is_flag=True,
-    help="Enable debug mode"
-)
-@click.option(
-    "-c", "--config",
-    is_flag=True,
-    help="Print the default config"
-)
-@click.option(
-    "--kubeconfig",
-    type=click.Path(exists=True),
-    help="Path to kubeconfig file"
-)
-@click.version_option(version=DEFAULT_VERSION, prog_name="lazyk8s")
-def cli(debug: bool, config: bool, kubeconfig: str) -> None:
-    """lazyk8s - The lazier way to manage Kubernetes
+def cli() -> None:
+    """Main CLI entry point"""
+    parser = init_args()
+    args = parser.parse_args()
 
-    A terminal UI for managing Kubernetes clusters with ease.
-    """
-    if config:
+    if args.config:
         print_config()
         sys.exit(0)
 
     # Create application configuration
-    app_config = AppConfig(debug=debug, kubeconfig=kubeconfig)
+    app_config = AppConfig(debug=args.debug, kubeconfig=args.kubeconfig)
 
     # Create and run application
     try:
-        app = App(app_config)
+        app = App(app_config, initial_namespace=args.namespace)
         app.run()
     except KeyboardInterrupt:
         print("\n👋 Goodbye!")
         sys.exit(0)
     except Exception as e:
-        if debug:
+        if args.debug:
             raise
         print(f"Error: {e}")
         sys.exit(1)
