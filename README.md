@@ -35,3 +35,8 @@ lazyk8s
 ```bash
 pip install -e ".[dev]"
 ```
+
+## Acknowledgements
+
+- Inspired by [lazydocker](https://github.com/jesseduffield/lazydocker) by Jesse Duffield
+- Built with [Textual](https://github.com/Textualize/textual) TUI framework
