@@ -18,6 +18,7 @@ from kubernetes import client
 
 from .k8s_client import K8sClient
 from .config import AppConfig
+from . import __version__
 
 
 class StatusBar(Static):
@@ -498,11 +499,11 @@ class LazyK8sApp(App):
 
     def refresh_status_bar(self) -> None:
         """Update the status bar with cluster info"""
-        host, version = self.k8s_client.get_cluster_info()
+        host, _ = self.k8s_client.get_cluster_info()
         namespace = self.k8s_client.get_current_namespace()
         status_bar = self.query_one("#status-bar", StatusBar)
         status_bar.update(
-            f"[b]lazyk8s[/] [dim]{version}[/]  [cyan]●[/] {namespace}"
+            f"[b]lazyk8s[/] [dim]v{__version__}[/]  [cyan]●[/] {host}  [cyan]●[/] {namespace}"
         )
 
     def refresh_pods(self) -> None:

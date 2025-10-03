@@ -239,25 +239,23 @@ class K8sClient:
             return False
 
     def get_cluster_info(self) -> Tuple[str, str]:
-        """Get cluster host and version information"""
+        """Get cluster name and host information"""
         try:
-            # Get configuration to extract host
+            # Get configuration to extract cluster name and server
             contexts, active_context = config.list_kube_config_contexts()
             if active_context:
                 cluster_name = active_context['context']['cluster']
-                host = cluster_name
+                # Get the API server host from the kubernetes client configuration
+                cfg = client.Configuration.get_default_copy()
+                server = cfg.host if cfg.host else "unknown"
+                host = f"{cluster_name} ({server})"
             else:
                 host = "unknown"
 
-            # Get server version
-            version_api = client.VersionApi()
-            version_info = version_api.get_code()
-            version = version_info.git_version
-
-            return host, version
+            return host, ""
         except Exception as e:
             self.logger.error(f"Failed to get cluster info: {e}")
-            return "unknown", "unknown"
+            return "unknown", ""
 
     def get_pod_events(self, pod_name: str) -> str:
         """Get events for a specific pod using kubectl describe format"""
