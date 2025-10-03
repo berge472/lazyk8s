@@ -7,7 +7,10 @@ from textual import work, on
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Static, ListView, ListItem, Label, RichLog, Input, Button
+from textual.widgets import (
+    Footer, Static, ListView, ListItem, Label, RichLog, Input, Button,
+    TabbedContent, TabPane
+)
 from textual.binding import Binding
 from textual.reactive import reactive
 from textual.timer import Timer
@@ -347,11 +350,40 @@ class LazyK8sApp(App):
         }
     }
 
-    #logs-panel {
+    #logs-tabs {
+        height: 1fr;
+        background: transparent;
+    }
+
+    #logs-tabs Tabs {
+        height: 1;
+        dock: top;
+        background: transparent;
+    }
+
+    #logs-tabs Tab {
+        display: none;
+    }
+
+    #logs-tabs Underline {
+        display: none;
+    }
+
+    #logs-tabs TabPane {
+        padding: 0;
+    }
+
+    #logs-panel, #events-panel, #metadata-panel {
         height: 1fr;
         border: none;
         background: transparent;
         padding: 0 1;
+        overflow-x: auto;
+        overflow-y: auto;
+    }
+
+    RichLog {
+        scrollbar-size-horizontal: 1;
     }
 
     ListView {
@@ -388,11 +420,13 @@ class LazyK8sApp(App):
         Binding("f", "toggle_follow", "Follow"),
         Binding("space", "toggle_container", "Toggle Container", show=False),
         Binding("tab", "focus_next", "Next"),
-        # Vim navigation
-        Binding("j", "cursor_down", "Down", show=False),
-        Binding("k", "cursor_up", "Up", show=False),
-        Binding("h", "focus_previous", "Prev Panel", show=False),
-        Binding("l", "focus_next", "Next Panel", show=False),
+        # Tab switching
+        Binding("l", "switch_tab('logs-tab')", "Logs", show=False),
+        Binding("e", "switch_tab('events-tab')", "Events", show=False),
+        Binding("m", "switch_tab('metadata-tab')", "Metadata", show=False),
+        # Horizontal scrolling for log panels
+        Binding("left", "scroll_log_left", "Scroll Left", show=False),
+        Binding("right", "scroll_log_right", "Scroll Right", show=False),
     ]
 
     selected_pod: reactive[Optional[client.V1Pod]] = reactive(None)
@@ -430,7 +464,13 @@ class LazyK8sApp(App):
                 with Container(id="info-container"):
                     yield Static(id="info-panel")
                 with Container(id="logs-container"):
-                    yield RichLog(id="logs-panel", highlight=True, markup=True)
+                    with TabbedContent(id="logs-tabs"):
+                        with TabPane("Logs", id="logs-tab"):
+                            yield RichLog(id="logs-panel", highlight=True, markup=True)
+                        with TabPane("Events", id="events-tab"):
+                            yield RichLog(id="events-panel", highlight=True, markup=True)
+                        with TabPane("Metadata", id="metadata-tab"):
+                            yield RichLog(id="metadata-panel", highlight=True, markup=True)
 
         # Footer with keybindings
         yield Footer()
@@ -443,7 +483,7 @@ class LazyK8sApp(App):
         self.query_one("#pods-container").border_title = "Pods"
         self.query_one("#containers-container").border_title = "Containers [dim](Space to toggle)[/]"
         self.query_one("#info-container").border_title = "Info"
-        self.query_one("#logs-container").border_title = "Logs"
+        self.update_logs_title()
 
         self.refresh_status_bar()
         self.refresh_pods()
@@ -454,6 +494,8 @@ class LazyK8sApp(App):
             self.refresh_containers()
             self.show_pod_info()
             self.show_pod_logs()
+            self.show_pod_events()
+            self.show_pod_metadata()
 
     def refresh_status_bar(self) -> None:
         """Update the status bar with cluster info"""
@@ -610,6 +652,89 @@ class LazyK8sApp(App):
                 # No prefix, just write the line
                 logs_panel.write(line)
 
+    def show_pod_events(self) -> None:
+        """Show events for the selected pod"""
+        events_panel = self.query_one("#events-panel", RichLog)
+        events_panel.clear()
+
+        if not self.selected_pod:
+            events_panel.write("[dim]no pod selected[/]")
+            return
+
+        events = self.k8s_client.get_pod_events(self.selected_pod.metadata.name)
+
+        if not events or events.strip() == "":
+            events_panel.write("[dim]no events found[/]")
+            return
+
+        # Display the events table from kubectl describe
+        for line in events.split("\n"):
+            if not line.strip():
+                continue
+
+            # Color code based on keywords in the line
+            line_lower = line.lower()
+            if "warning" in line_lower or "failed" in line_lower or "error" in line_lower:
+                events_panel.write(f"[yellow]{line}[/]")
+            elif "backoff" in line_lower or "killing" in line_lower:
+                events_panel.write(f"[red]{line}[/]")
+            elif "pulled" in line_lower or "created" in line_lower or "started" in line_lower:
+                events_panel.write(f"[green]{line}[/]")
+            else:
+                events_panel.write(line)
+
+    def show_pod_metadata(self) -> None:
+        """Show metadata for the selected pod"""
+        metadata_panel = self.query_one("#metadata-panel", RichLog)
+        metadata_panel.clear()
+
+        if not self.selected_pod:
+            metadata_panel.write("[dim]no pod selected[/]")
+            return
+
+        pod = self.selected_pod
+
+        # Basic metadata
+        metadata_panel.write(f"[bold cyan]Basic Information[/]")
+        metadata_panel.write(f"  Name: [green]{pod.metadata.name}[/]")
+        metadata_panel.write(f"  Namespace: [green]{pod.metadata.namespace}[/]")
+        metadata_panel.write(f"  UID: [dim]{pod.metadata.uid}[/]")
+        metadata_panel.write(f"  Created: {pod.metadata.creation_timestamp}")
+        metadata_panel.write("")
+
+        # Labels
+        if pod.metadata.labels:
+            metadata_panel.write(f"[bold cyan]Labels[/]")
+            for key, value in sorted(pod.metadata.labels.items()):
+                metadata_panel.write(f"  [yellow]{key}[/]: {value}")
+            metadata_panel.write("")
+
+        # Annotations
+        if pod.metadata.annotations:
+            metadata_panel.write(f"[bold cyan]Annotations[/]")
+            for key, value in sorted(pod.metadata.annotations.items()):
+                # Truncate long values
+                if len(value) > 100:
+                    value = value[:97] + "..."
+                metadata_panel.write(f"  [yellow]{key}[/]: [dim]{value}[/]")
+            metadata_panel.write("")
+
+        # Spec details
+        metadata_panel.write(f"[bold cyan]Spec[/]")
+        metadata_panel.write(f"  Node: {pod.spec.node_name or 'N/A'}")
+        metadata_panel.write(f"  Service Account: {pod.spec.service_account or 'default'}")
+        metadata_panel.write(f"  Restart Policy: {pod.spec.restart_policy}")
+        if pod.spec.priority:
+            metadata_panel.write(f"  Priority: {pod.spec.priority}")
+        metadata_panel.write("")
+
+        # Status details
+        metadata_panel.write(f"[bold cyan]Status[/]")
+        metadata_panel.write(f"  Phase: {pod.status.phase}")
+        metadata_panel.write(f"  Pod IP: {pod.status.pod_ip or 'N/A'}")
+        metadata_panel.write(f"  Host IP: {pod.status.host_ip or 'N/A'}")
+        metadata_panel.write(f"  QoS Class: {pod.status.qos_class or 'N/A'}")
+
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         """Handle cursor movement in lists with debouncing"""
         if event.list_view.id == "pods-list":
@@ -638,6 +763,8 @@ class LazyK8sApp(App):
             self.refresh_containers()
             self.show_pod_info()
             self.show_pod_logs()
+            self.show_pod_events()
+            self.show_pod_metadata()
             self._pending_pod_index = None
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -655,6 +782,8 @@ class LazyK8sApp(App):
                 self.refresh_containers()
                 self.show_pod_info()
                 self.show_pod_logs()
+                self.show_pod_events()
+                self.show_pod_metadata()
 
         elif event.list_view.id == "containers-list":
             # Container selected with Enter - just mark as selected
@@ -704,17 +833,80 @@ class LazyK8sApp(App):
         if self.selected_pod:
             self.show_pod_logs()
 
-    def action_cursor_down(self) -> None:
-        """Move cursor down (vim j)"""
-        focused = self.focused
-        if isinstance(focused, ListView):
-            focused.action_cursor_down()
+    def update_logs_title(self) -> None:
+        """Update the logs container title to show active tab"""
+        try:
+            logs_tabs = self.query_one("#logs-tabs", TabbedContent)
+            active_tab = logs_tabs.active
 
-    def action_cursor_up(self) -> None:
-        """Move cursor up (vim k)"""
-        focused = self.focused
-        if isinstance(focused, ListView):
-            focused.action_cursor_up()
+            # Build title with active tab highlighted
+            if active_tab == "logs-tab":
+                title = "[cyan](L)ogs[/] | [dim](E)vents[/] | [dim](M)etadata[/]"
+            elif active_tab == "events-tab":
+                title = "[dim](L)ogs[/] | [cyan](E)vents[/] | [dim](M)etadata[/]"
+            elif active_tab == "metadata-tab":
+                title = "[dim](L)ogs[/] | [dim](E)vents[/] | [cyan](M)etadata[/]"
+            else:
+                title = "(L)ogs | (E)vents | (M)etadata"
+
+            # Add following indicator if active
+            if self.following_logs and active_tab == "logs-tab":
+                title = title.replace("(L)ogs", "(L)ogs [green]●[/]")
+
+            self.query_one("#logs-container").border_title = title
+        except Exception:
+            pass
+
+    def action_switch_tab(self, tab_id: str) -> None:
+        """Switch to a specific tab"""
+        try:
+            logs_tabs = self.query_one("#logs-tabs", TabbedContent)
+            logs_tabs.active = tab_id
+            self.update_logs_title()
+        except Exception:
+            pass
+
+    def action_scroll_log_left(self) -> None:
+        """Scroll the active log panel left"""
+        try:
+            logs_tabs = self.query_one("#logs-tabs", TabbedContent)
+            active_tab = logs_tabs.active
+
+            # Get the active panel
+            if active_tab == "logs-tab":
+                panel = self.query_one("#logs-panel", RichLog)
+            elif active_tab == "events-tab":
+                panel = self.query_one("#events-panel", RichLog)
+            elif active_tab == "metadata-tab":
+                panel = self.query_one("#metadata-panel", RichLog)
+            else:
+                return
+
+            # Scroll left
+            panel.scroll_left(animate=False)
+        except Exception:
+            pass
+
+    def action_scroll_log_right(self) -> None:
+        """Scroll the active log panel right"""
+        try:
+            logs_tabs = self.query_one("#logs-tabs", TabbedContent)
+            active_tab = logs_tabs.active
+
+            # Get the active panel
+            if active_tab == "logs-tab":
+                panel = self.query_one("#logs-panel", RichLog)
+            elif active_tab == "events-tab":
+                panel = self.query_one("#events-panel", RichLog)
+            elif active_tab == "metadata-tab":
+                panel = self.query_one("#metadata-panel", RichLog)
+            else:
+                return
+
+            # Scroll right
+            panel.scroll_right(animate=False)
+        except Exception:
+            pass
 
     def action_toggle_container(self) -> None:
         """Toggle container log visibility (Space key)"""
@@ -742,16 +934,14 @@ class LazyK8sApp(App):
         """Toggle log following"""
         self.following_logs = not self.following_logs
 
-        # Update logs container border title
-        logs_container = self.query_one("#logs-container")
+        # Update title to show following indicator
+        self.update_logs_title()
+
+        # Start/stop following timer
         if self.following_logs:
-            logs_container.border_title = "Logs [green]●[/] Following"
-            # Start following timer
             if self._log_follow_timer is None:
                 self._log_follow_timer = self.set_interval(2.0, self._refresh_logs)
         else:
-            logs_container.border_title = "Logs"
-            # Stop following timer
             if self._log_follow_timer is not None:
                 self._log_follow_timer.stop()
                 self._log_follow_timer = None

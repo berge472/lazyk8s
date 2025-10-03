@@ -234,3 +234,54 @@ class K8sClient:
         except Exception as e:
             self.logger.error(f"Failed to get cluster info: {e}")
             return "unknown", "unknown"
+
+    def get_pod_events(self, pod_name: str) -> str:
+        """Get events for a specific pod using kubectl describe format"""
+        try:
+            import subprocess
+
+            # Use kubectl describe to get events in the same format as VSCode extension
+            cmd = [
+                "kubectl", "describe", "pod",
+                "-n", self.namespace,
+                pod_name
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                # Extract just the Events section from the describe output
+                output = result.stdout
+
+                # Find the Events section
+                if "Events:" in output:
+                    # Split at Events: and take everything after
+                    events_section = output.split("Events:", 1)[1]
+
+                    # Check if events show <none>
+                    if "<none>" in events_section[:20]:  # Check first 20 chars
+                        return ""
+
+                    # The events section goes until the end
+                    lines = events_section.split("\n")
+                    event_lines = []
+                    for line in lines:
+                        # Keep lines that are part of the events table
+                        if line.strip() and "<none>" not in line.lower():
+                            event_lines.append(line)
+
+                    return "\n".join(event_lines)
+                else:
+                    return ""
+            else:
+                self.logger.error(f"Failed to get events: {result.stderr}")
+                return ""
+
+        except Exception as e:
+            self.logger.error(f"Failed to get events: {e}")
+            return ""
