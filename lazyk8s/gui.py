@@ -3,11 +3,13 @@
 import subprocess
 from typing import List, Optional
 from rich.text import Text
+from textual import work
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import Footer, Static, ListView, ListItem, Label, RichLog
 from textual.binding import Binding
 from textual.reactive import reactive
+from textual.timer import Timer
 from kubernetes import client
 
 from .k8s_client import K8sClient
@@ -57,6 +59,9 @@ class ContainerItem(ListItem):
 class LazyK8sApp(App):
     """Textual TUI for Kubernetes management"""
 
+    # Default to tokyo-night theme
+    THEME = "tokyo-night"
+
     CSS = """
     * {
         scrollbar-color: $primary 30%;
@@ -95,7 +100,7 @@ class LazyK8sApp(App):
         height: 1fr;
         border: round $accent 40%;
         background: $surface 30%;
-        border-title-align: right;
+        border-title-align: left;
         border-title-color: $text-accent 50%;
 
         &:focus-within {
@@ -113,11 +118,11 @@ class LazyK8sApp(App):
     }
 
     #containers-container {
-        height: auto;
+        height: 7;
         margin-top: 1;
         border: round $accent 40%;
         background: $surface 30%;
-        border-title-align: right;
+        border-title-align: left;
         border-title-color: $text-accent 50%;
 
         &:focus-within {
@@ -128,8 +133,7 @@ class LazyK8sApp(App):
     }
 
     #containers-list {
-        height: auto;
-        max-height: 8;
+        height: 5;
         border: none;
         background: transparent;
         padding: 0 1;
@@ -145,7 +149,7 @@ class LazyK8sApp(App):
         height: auto;
         border: round $accent 40%;
         background: $surface 20%;
-        border-title-align: right;
+        border-title-align: left;
         border-title-color: $text-accent 50%;
     }
 
@@ -163,7 +167,7 @@ class LazyK8sApp(App):
         margin-top: 1;
         border: round $accent 40%;
         background: $surface 20%;
-        border-title-align: right;
+        border-title-align: left;
         border-title-color: $text-accent 50%;
 
         &:focus-within {
@@ -225,6 +229,8 @@ class LazyK8sApp(App):
         self.app_config = app_config
         self.pods: List[client.V1Pod] = []
         self.current_namespace = k8s_client.get_current_namespace()
+        self._debounce_timer: Optional[Timer] = None
+        self._pending_pod_index: Optional[int] = None
 
     def compose(self) -> ComposeResult:
         """Create child widgets"""
@@ -262,6 +268,13 @@ class LazyK8sApp(App):
 
         self.refresh_status_bar()
         self.refresh_pods()
+
+        # Auto-select first pod if available
+        if self.pods:
+            self.selected_pod = self.pods[0]
+            self.refresh_containers()
+            self.show_pod_info()
+            self.show_pod_logs()
 
     def refresh_status_bar(self) -> None:
         """Update the status bar with cluster info"""
@@ -345,10 +358,41 @@ class LazyK8sApp(App):
                 else:
                     logs_panel.write(line)
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """Handle list item selection"""
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """Handle cursor movement in lists with debouncing"""
         if event.list_view.id == "pods-list":
-            # Pod selected
+            # Cancel any existing timer
+            if self._debounce_timer is not None:
+                self._debounce_timer.stop()
+
+            # Get the highlighted index
+            if event.item is not None and isinstance(event.item, PodItem):
+                # Store the pod index for later
+                self._pending_pod_index = self.pods.index(event.item.pod)
+
+                # Set a timer to trigger selection after 200ms
+                self._debounce_timer = self.set_timer(
+                    0.2,  # 200ms debounce
+                    self._select_pending_pod
+                )
+
+    def _select_pending_pod(self) -> None:
+        """Select the pending pod after debounce timer"""
+        if self._pending_pod_index is not None and self._pending_pod_index < len(self.pods):
+            self.selected_pod = self.pods[self._pending_pod_index]
+            self.selected_container = None
+            self.refresh_containers()
+            self.show_pod_info()
+            self.show_pod_logs()
+            self._pending_pod_index = None
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Handle list item selection (Enter key)"""
+        if event.list_view.id == "pods-list":
+            # Pod selected - cancel debounce and select immediately
+            if self._debounce_timer is not None:
+                self._debounce_timer.stop()
+
             if isinstance(event.item, PodItem):
                 self.selected_pod = event.item.pod
                 self.selected_container = None
@@ -396,7 +440,8 @@ class LazyK8sApp(App):
 
         # Exit the TUI temporarily
         with self.suspend():
-            print(f"\n● Opening shell: {namespace}/{pod_name}/{container}\n")
+            # Colorful banner
+            print(f"\033[36m→\033[0m \033[2mShell:\033[0m \033[33m{namespace}\033[0m:\033[32m{pod_name}\033[0m.\033[35m{container}\033[0m")
 
             for shell in ["/bin/bash", "/bin/sh", "/bin/ash"]:
                 try:
@@ -412,7 +457,9 @@ class LazyK8sApp(App):
                 except Exception:
                     continue
 
-            input("\nPress Enter to return to lazyk8s...")
+            # Colorful exit message
+            print(f"\n\033[36m←\033[0m \033[2mPress\033[0m \033[1;32mEnter\033[0m \033[2mto return to\033[0m \033[1;36mlazyk8s\033[0m\033[2m...\033[0m")
+            input()
 
         # Refresh the display after returning
         self.refresh_pods()
