@@ -529,31 +529,86 @@ class LazyK8sApp(App):
             logs_panel.write("[dim]no active containers (press Space to toggle)[/]")
             return
 
-        # Show logs from all active containers
-        for container in active:
-            # Add container header if multiple containers
-            if len(active) > 1:
-                logs_panel.write(f"[bold cyan]━━━ {container} ━━━[/]")
-
+        # Get interlaced logs from all active containers
+        if len(active) == 1:
+            # Single container - use simple method
             logs = self.k8s_client.get_pod_logs(
                 self.selected_pod.metadata.name,
-                container,
+                active[0],
                 lines=100
             )
+            self._write_logs(logs_panel, logs, None)
+        else:
+            # Multiple containers - get combined logs with prefix
+            logs = self.k8s_client.get_pod_logs_all_containers(
+                self.selected_pod.metadata.name,
+                active,
+                lines=100
+            )
+            self._write_prefixed_logs(logs_panel, logs)
 
-            # Write logs with subtle colorization
-            for line in logs.split("\n"):
-                if line:
-                    # Apply minimal color based on log level
-                    if any(level in line.upper() for level in ["ERROR", "FATAL"]):
-                        logs_panel.write(f"[red]{line}[/]")
-                    elif any(level in line.upper() for level in ["WARN", "WARNING"]):
-                        logs_panel.write(f"[yellow]{line}[/]")
+    def _write_logs(self, logs_panel: RichLog, logs: str, container_name: Optional[str]) -> None:
+        """Write logs with colorization"""
+        for line in logs.split("\n"):
+            if line:
+                # Apply minimal color based on log level
+                if any(level in line.upper() for level in ["ERROR", "FATAL"]):
+                    logs_panel.write(f"[red]{line}[/]")
+                elif any(level in line.upper() for level in ["WARN", "WARNING"]):
+                    logs_panel.write(f"[yellow]{line}[/]")
+                else:
+                    logs_panel.write(line)
+
+    def _write_prefixed_logs(self, logs_panel: RichLog, logs: str) -> None:
+        """Write logs that have kubectl prefix format: [pod/container] timestamp line"""
+        for line in logs.split("\n"):
+            if not line:
+                continue
+
+            # Parse kubectl prefix format: [pod/container] timestamp log_message
+            # Example: [myapp-5d4b7c9f6b-abc12/app] 2024-01-15T10:30:45.123456789Z Log message
+            if line.startswith("["):
+                try:
+                    # Extract container name from prefix
+                    prefix_end = line.index("]")
+                    prefix = line[1:prefix_end]  # Remove [ and ]
+
+                    # Get container name (after the /)
+                    if "/" in prefix:
+                        container_name = prefix.split("/")[1]
                     else:
-                        logs_panel.write(line)
+                        container_name = prefix
 
-            if len(active) > 1:
-                logs_panel.write("")  # Empty line between containers
+                    # Get the rest of the line (after timestamp)
+                    rest = line[prefix_end + 1:].strip()
+
+                    # Remove timestamp if present (ISO 8601 format)
+                    if " " in rest:
+                        parts = rest.split(" ", 1)
+                        if len(parts) > 1:
+                            log_message = parts[1]
+                        else:
+                            log_message = rest
+                    else:
+                        log_message = rest
+
+                    # Format with container name and colorization
+                    container_tag = f"[cyan]{container_name}[/]"
+
+                    # Apply minimal color based on log level
+                    if any(level in log_message.upper() for level in ["ERROR", "FATAL"]):
+                        logs_panel.write(f"{container_tag} [red]{log_message}[/]")
+                    elif any(level in log_message.upper() for level in ["WARN", "WARNING"]):
+                        logs_panel.write(f"{container_tag} [yellow]{log_message}[/]")
+                    else:
+                        logs_panel.write(f"{container_tag} {log_message}")
+
+                except (ValueError, IndexError):
+                    # Couldn't parse, just write the line as-is
+                    logs_panel.write(line)
+            else:
+                # No prefix, just write the line
+                logs_panel.write(line)
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         """Handle cursor movement in lists with debouncing"""

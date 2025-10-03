@@ -90,6 +90,44 @@ class K8sClient:
             self.logger.error(f"Failed to get logs for {pod_name}/{container_name}: {e}")
             return f"Error: {e}"
 
+    def get_pod_logs_all_containers(self, pod_name: str, container_names: List[str], lines: int = 100) -> str:
+        """Get logs from multiple containers with prefixes, interlaced by timestamp"""
+        try:
+            # Use kubectl since the Python client doesn't support --all-containers with prefix nicely
+            import subprocess
+
+            # Build container filter string
+            container_args = []
+            for container in container_names:
+                container_args.extend(["-c", container])
+
+            # Run kubectl to get logs with prefix
+            cmd = [
+                "kubectl", "logs",
+                "-n", self.namespace,
+                pod_name,
+                "--prefix=true",
+                "--timestamps=true",
+                f"--tail={lines}",
+            ] + container_args
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                return result.stdout
+            else:
+                self.logger.error(f"Failed to get logs: {result.stderr}")
+                return f"Error: {result.stderr}"
+
+        except Exception as e:
+            self.logger.error(f"Failed to get combined logs: {e}")
+            return f"Error: {e}"
+
     def stream_pod_logs(self, pod_name: str, container_name: str) -> str:
         """Stream logs from a pod container (for future streaming implementation)"""
         try:
