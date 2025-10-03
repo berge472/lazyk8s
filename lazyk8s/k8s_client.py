@@ -93,36 +93,60 @@ class K8sClient:
     def get_pod_logs_all_containers(self, pod_name: str, container_names: List[str], lines: int = 100) -> str:
         """Get logs from multiple containers with prefixes, interlaced by timestamp"""
         try:
-            # Use kubectl since the Python client doesn't support --all-containers with prefix nicely
             import subprocess
 
-            # Build container filter string
-            container_args = []
-            for container in container_names:
-                container_args.extend(["-c", container])
+            # Fetch logs from each container separately and combine them
+            all_logs = []
 
-            # Run kubectl to get logs with prefix
-            cmd = [
-                "kubectl", "logs",
-                "-n", self.namespace,
-                pod_name,
-                "--prefix=true",
-                "--timestamps=true",
-                f"--tail={lines}",
-            ] + container_args
+            for container_name in container_names:
+                # Run kubectl to get logs for this container with prefix
+                cmd = [
+                    "kubectl", "logs",
+                    "-n", self.namespace,
+                    pod_name,
+                    "-c", container_name,
+                    "--prefix=true",
+                    "--timestamps=true",
+                    f"--tail={lines}",
+                ]
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
 
-            if result.returncode == 0:
-                return result.stdout
-            else:
-                self.logger.error(f"Failed to get logs: {result.stderr}")
-                return f"Error: {result.stderr}"
+                if result.returncode == 0 and result.stdout.strip():
+                    all_logs.append(result.stdout)
+                elif result.returncode != 0:
+                    self.logger.error(f"Failed to get logs for {container_name}: {result.stderr}")
+
+            if not all_logs:
+                return ""
+
+            # Combine all logs and sort by timestamp
+            combined_lines = []
+            for log_output in all_logs:
+                combined_lines.extend(log_output.strip().split("\n"))
+
+            # Sort by timestamp (format: [pod/container] timestamp message)
+            def extract_timestamp(line):
+                try:
+                    # Extract timestamp from format: [pod/container] 2024-01-15T10:30:45.123456789Z message
+                    if "]" in line:
+                        after_bracket = line.split("]", 1)[1].strip()
+                        if " " in after_bracket:
+                            timestamp_str = after_bracket.split(" ", 1)[0]
+                            return timestamp_str
+                except Exception:
+                    pass
+                return ""
+
+            # Sort lines by timestamp
+            sorted_lines = sorted(combined_lines, key=extract_timestamp)
+
+            return "\n".join(sorted_lines)
 
         except Exception as e:
             self.logger.error(f"Failed to get combined logs: {e}")
@@ -263,8 +287,9 @@ class K8sClient:
                     # Split at Events: and take everything after
                     events_section = output.split("Events:", 1)[1]
 
-                    # Check if events show <none>
-                    if "<none>" in events_section[:20]:  # Check first 20 chars
+                    # Check if events show <none> - strip whitespace first
+                    events_trimmed = events_section.strip()
+                    if not events_trimmed or events_trimmed.lower().startswith("<none>"):
                         return ""
 
                     # The events section goes until the end
@@ -272,8 +297,12 @@ class K8sClient:
                     event_lines = []
                     for line in lines:
                         # Keep lines that are part of the events table
-                        if line.strip() and "<none>" not in line.lower():
+                        stripped = line.strip()
+                        if stripped and stripped.lower() != "<none>":
                             event_lines.append(line)
+
+                    if not event_lines:
+                        return ""
 
                     return "\n".join(event_lines)
                 else:

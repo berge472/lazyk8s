@@ -48,43 +48,22 @@ class NamespaceSelector(ModalScreen[Optional[str]]):
         max-height: 80%;
         border: round $accent;
         background: $background;
-        padding: 0;
+        padding: 1 2;
     }
 
-    #namespace-title {
-        dock: top;
+    #namespace-filter-display {
         height: 1;
-        background: $accent-muted;
-        color: $text-accent;
-        text-style: bold;
-        padding: 0 2;
-    }
-
-    #namespace-filter {
-        dock: top;
-        height: 1;
-        margin: 1 2 0 2;
-        border: none;
-        background: $surface-lighten-1;
-        padding: 0 1;
-
-        &:focus {
-            border-left: wide $accent;
-            padding-left: 0;
-        }
+        color: $accent;
+        padding: 0 0 0 0;
+        margin: 0 0 1 0;
     }
 
     #namespace-list {
         height: auto;
         max-height: 20;
         min-height: 10;
-        margin: 1 2;
         border: none;
         background: $surface 30%;
-
-        &:focus {
-            border: round $accent;
-        }
     }
 
     NamespaceItem {
@@ -94,6 +73,10 @@ class NamespaceSelector(ModalScreen[Optional[str]]):
         &:hover {
             background: $boost;
         }
+    }
+
+    ListView > NamespaceItem.--highlight {
+        background: $accent 30%;
     }
 
     #namespace-help {
@@ -108,8 +91,6 @@ class NamespaceSelector(ModalScreen[Optional[str]]):
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
         Binding("ctrl+c", "cancel", "Cancel"),
-        Binding("down", "focus_list", "Focus List", show=False),
-        Binding("up", "focus_filter", "Focus Filter", show=False),
     ]
 
     def __init__(self, namespaces: List[str], current_namespace: str):
@@ -117,32 +98,33 @@ class NamespaceSelector(ModalScreen[Optional[str]]):
         self.all_namespaces = sorted(namespaces)
         self.current_namespace = current_namespace
         self.filtered_namespaces = self.all_namespaces.copy()
+        self.filter_text = ""
 
     def compose(self) -> ComposeResult:
         with Container(id="namespace-dialog"):
-            yield Static("Select Namespace", id="namespace-title")
-            yield Input(
-                placeholder="Filter namespaces...",
-                id="namespace-filter"
-            )
+            yield Static("Filter: ", id="namespace-filter-display")
             yield ListView(id="namespace-list")
-            yield Static("↑↓: Navigate | Enter: Select | Esc: Cancel", id="namespace-help")
+            yield Static("↑↓: Navigate | Enter: Select | Esc: Cancel | Type to filter", id="namespace-help")
 
     def on_mount(self) -> None:
-        """Focus the filter input when mounted"""
+        """Focus the list when mounted"""
         self.refresh_namespace_list()
-        self.query_one("#namespace-filter", Input).focus()
+        namespace_list = self.query_one("#namespace-list", ListView)
+        namespace_list.focus()
+        # Highlight the first item
+        if len(namespace_list) > 0:
+            namespace_list.index = 0
 
-    def refresh_namespace_list(self, filter_text: str = "") -> None:
+    def refresh_namespace_list(self) -> None:
         """Refresh the namespace list based on filter"""
         namespace_list = self.query_one("#namespace-list", ListView)
         namespace_list.clear()
 
         # Filter namespaces
-        if filter_text:
+        if self.filter_text:
             self.filtered_namespaces = [
                 ns for ns in self.all_namespaces
-                if filter_text.lower() in ns.lower()
+                if self.filter_text.lower() in ns.lower()
             ]
         else:
             self.filtered_namespaces = self.all_namespaces.copy()
@@ -151,10 +133,17 @@ class NamespaceSelector(ModalScreen[Optional[str]]):
         for ns in self.filtered_namespaces:
             namespace_list.append(NamespaceItem(ns))
 
-    @on(Input.Changed, "#namespace-filter")
-    def on_filter_changed(self, event: Input.Changed) -> None:
-        """Handle filter input changes"""
-        self.refresh_namespace_list(event.value)
+        # Update filter display - always show it
+        filter_display = self.query_one("#namespace-filter-display", Static)
+        filter_display.update(f"Filter: {self.filter_text}")
+
+        # Always highlight first item - use call_after_refresh to ensure it's applied
+        def highlight_first():
+            if len(namespace_list) > 0:
+                namespace_list.index = 0
+                namespace_list.focus()
+
+        self.call_after_refresh(highlight_first)
 
     @on(ListView.Selected, "#namespace-list")
     def on_namespace_selected(self, event: ListView.Selected) -> None:
@@ -162,22 +151,32 @@ class NamespaceSelector(ModalScreen[Optional[str]]):
         if isinstance(event.item, NamespaceItem):
             self.dismiss(event.item.namespace)
 
+    def on_key(self, event) -> None:
+        """Handle key presses for filtering"""
+        key = event.key
+
+        # Handle backspace
+        if key == "backspace":
+            if self.filter_text:
+                self.filter_text = self.filter_text[:-1]
+                self.refresh_namespace_list()
+                event.prevent_default()
+            return
+
+        # Ignore special keys
+        if key in ["escape", "enter", "up", "down", "left", "right", "tab",
+                   "home", "end", "pageup", "pagedown", "ctrl+c"]:
+            return
+
+        # Handle character input (single char keys)
+        if len(key) == 1 and key.isprintable():
+            self.filter_text += key
+            self.refresh_namespace_list()
+            event.prevent_default()
+
     def action_cancel(self) -> None:
         """Cancel namespace selection"""
         self.dismiss(None)
-
-    def action_focus_list(self) -> None:
-        """Focus the namespace list"""
-        # Only move focus from input to list
-        if self.focused == self.query_one("#namespace-filter"):
-            self.query_one("#namespace-list").focus()
-
-    def action_focus_filter(self) -> None:
-        """Focus the filter input"""
-        # Only move focus from list to input when at top
-        namespace_list = self.query_one("#namespace-list", ListView)
-        if self.focused == namespace_list and namespace_list.index == 0:
-            self.query_one("#namespace-filter").focus()
 
 
 class PodItem(ListItem):

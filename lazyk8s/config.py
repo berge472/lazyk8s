@@ -38,8 +38,12 @@ class AppConfig:
         logger = logging.getLogger("lazyk8s")
         logger.setLevel(self.log_level)
 
-        # Console handler
-        handler = logging.StreamHandler()
+        # Log to file instead of console to avoid interfering with TUI
+        log_file = Path.home() / ".cache" / "lazyk8s" / "lazyk8s.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # File handler
+        handler = logging.FileHandler(log_file)
         handler.setLevel(self.log_level)
 
         # Formatter
