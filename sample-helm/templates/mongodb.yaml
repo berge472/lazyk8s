@@ -1,0 +1,26 @@
+{{- if .Values.mongodb.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mongodb-test
+  labels:
+    app: mongodb
+spec:
+  containers:
+  - name: mongodb
+    image: {{ .Values.mongodb.image }}
+    ports:
+    - containerPort: {{ .Values.mongodb.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-service
+spec:
+  selector:
+    app: mongodb
+  ports:
+  - protocol: TCP
+    port: {{ .Values.mongodb.port }}
+    targetPort: {{ .Values.mongodb.port }}
+{{- end }}

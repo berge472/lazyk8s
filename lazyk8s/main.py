@@ -11,43 +11,14 @@ from . import __version__
 
 def init_args():
     """Initialize argument parser"""
-    parser = argparse.ArgumentParser(
-        prog="lazyk8s",
-        description="lazyk8s - The lazier way to manage Kubernetes"
-    )
-
-    parser.add_argument(
-        "namespace",
-        nargs="?",
-        help="Initial namespace to select"
-    )
-
-    parser.add_argument(
-        "-d", "--debug",
-        action="store_true",
-        help="Enable debug mode"
-    )
-
-    parser.add_argument(
-        "-c", "--config",
-        action="store_true",
-        help="Print the default config"
-    )
-
-    parser.add_argument(
-        "--kubeconfig",
-        type=str,
-        help="Path to kubeconfig file"
-    )
-
-    parser.add_argument(
-        "-v", "--version",
-        action="version",
-        version=f"lazyk8s {__version__}"
-    )
+    parser = argparse.ArgumentParser( prog="lazyk8s",description="lazyk8s - The lazier way to manage Kubernetes")
+    parser.add_argument("namespace",nargs="?",help="Initial namespace to select")
+    parser.add_argument("-d", "--debug",action="store_true",help="Enable debug mode")
+    parser.add_argument("-c", "--config",action="store_true",help="Print the default config")
+    parser.add_argument("--kubeconfig", type=str, help="Path to kubeconfig file")
+    parser.add_argument("-v", "--version",action="version",version=f"lazyk8s {__version__}")
 
     return parser
-
 
 def cli() -> None:
     """Main CLI entry point"""

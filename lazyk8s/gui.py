@@ -34,6 +34,93 @@ class NamespaceItem(ListItem):
         super().__init__(Label(f"  {namespace}"))
 
 
+class ConfirmDialog(ModalScreen[bool]):
+    """Modal screen for confirmation dialogs"""
+
+    CSS = """
+    ConfirmDialog {
+        align: center middle;
+        background: black 40%;
+    }
+
+    #confirm-dialog {
+        width: 60;
+        height: auto;
+        border: round $error;
+        background: $background;
+        padding: 1 2;
+    }
+
+    #confirm-title {
+        width: 100%;
+        height: 1;
+        content-align: center middle;
+        color: $error;
+        text-style: bold;
+        padding: 0 0 1 0;
+    }
+
+    #confirm-message {
+        width: 100%;
+        height: auto;
+        content-align: center middle;
+        padding: 1 0;
+    }
+
+    #confirm-buttons {
+        width: 100%;
+        height: auto;
+        align: center middle;
+        padding: 1 0;
+    }
+
+    #confirm-buttons Button {
+        margin: 0 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("n", "cancel", "No"),
+        Binding("y", "confirm", "Yes"),
+    ]
+
+    def __init__(self, message: str, title: str = "Confirm"):
+        super().__init__()
+        self.message = message
+        self.title = title
+
+    def compose(self) -> ComposeResult:
+        with Container(id="confirm-dialog"):
+            yield Static(self.title, id="confirm-title")
+            yield Static(self.message, id="confirm-message")
+            with Horizontal(id="confirm-buttons"):
+                yield Button("Yes (y)", variant="error", id="confirm-yes")
+                yield Button("No (n)", variant="primary", id="confirm-no")
+
+    def on_mount(self) -> None:
+        """Focus the No button by default"""
+        self.query_one("#confirm-no", Button).focus()
+
+    @on(Button.Pressed, "#confirm-yes")
+    def on_confirm_yes(self) -> None:
+        """User confirmed"""
+        self.dismiss(True)
+
+    @on(Button.Pressed, "#confirm-no")
+    def on_confirm_no(self) -> None:
+        """User cancelled"""
+        self.dismiss(False)
+
+    def action_confirm(self) -> None:
+        """Confirm action"""
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        """Cancel action"""
+        self.dismiss(False)
+
+
 class NamespaceSelector(ModalScreen[Optional[str]]):
     """Modal screen for selecting a namespace"""
 
@@ -178,6 +265,459 @@ class NamespaceSelector(ModalScreen[Optional[str]]):
     def action_cancel(self) -> None:
         """Cancel namespace selection"""
         self.dismiss(None)
+
+
+class ContextItem(ListItem):
+    """A list item for displaying a kubeconfig context"""
+
+    def __init__(self, context: dict, is_current: bool = False) -> None:
+        self.context = context
+        self.context_name = context['name']
+        self.is_current = is_current
+
+        # Show indicator if current context
+        indicator = "[green]●[/]" if is_current else " "
+        super().__init__(Label(f"{indicator} {self.context_name}"))
+
+
+class ClusterSelector(ModalScreen[Optional[str]]):
+    """Modal screen for selecting a cluster context"""
+
+    CSS = """
+    ClusterSelector {
+        align: center middle;
+        background: black 40%;
+    }
+
+    #cluster-dialog {
+        width: 70;
+        height: auto;
+        max-height: 80%;
+        border: round $accent;
+        background: $background;
+        padding: 1 2;
+    }
+
+    #cluster-title {
+        height: 1;
+        color: $accent;
+        text-style: bold;
+        padding: 0 0 1 0;
+    }
+
+    #cluster-list {
+        height: auto;
+        max-height: 20;
+        min-height: 10;
+        border: none;
+        background: $surface 30%;
+    }
+
+    ContextItem {
+        padding: 0 1;
+        height: 1;
+
+        &:hover {
+            background: $boost;
+        }
+    }
+
+    ListView > ContextItem.--highlight {
+        background: $accent 30%;
+    }
+
+    #cluster-help {
+        dock: bottom;
+        height: 1;
+        background: $surface-darken-1;
+        color: $text-muted;
+        padding: 0 2;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("ctrl+c", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, contexts: List[dict], current_context: dict):
+        super().__init__()
+        self.contexts = contexts
+        self.current_context = current_context
+
+    def compose(self) -> ComposeResult:
+        with Container(id="cluster-dialog"):
+            yield Static("Select Cluster Context", id="cluster-title")
+            yield ListView(id="cluster-list")
+            yield Static("↑↓: Navigate | Enter: Select | Esc: Cancel", id="cluster-help")
+
+    def on_mount(self) -> None:
+        """Populate the context list when mounted"""
+        cluster_list = self.query_one("#cluster-list", ListView)
+
+        current_name = self.current_context.get('name', '') if self.current_context else ''
+
+        for ctx in self.contexts:
+            is_current = ctx['name'] == current_name
+            cluster_list.append(ContextItem(ctx, is_current))
+
+        cluster_list.focus()
+        if len(cluster_list) > 0:
+            cluster_list.index = 0
+
+    @on(ListView.Selected, "#cluster-list")
+    def on_context_selected(self, event: ListView.Selected) -> None:
+        """Handle context selection"""
+        if isinstance(event.item, ContextItem):
+            self.dismiss(event.item.context_name)
+
+    def action_cancel(self) -> None:
+        """Cancel context selection"""
+        self.dismiss(None)
+
+
+class NodeItem(ListItem):
+    """A list item for displaying a node"""
+
+    def __init__(self, node: client.V1Node, metrics: dict, pod_count: int, max_pods: int) -> None:
+        self.node = node
+        self.node_name = node.metadata.name
+
+        # Get node status
+        status = "Ready" if any(
+            cond.type == "Ready" and cond.status == "True"
+            for cond in node.status.conditions
+        ) else "NotReady"
+        status_icon = "[green]●[/]" if status == "Ready" else "[red]●[/]"
+
+        # Pod count color
+        pod_color = "green" if pod_count < max_pods * 0.8 else "yellow" if pod_count < max_pods else "red"
+
+        # Get roles - check multiple label formats
+        roles = []
+        if node.metadata.labels:
+            for label, value in node.metadata.labels.items():
+                # Check both formats: node-role.kubernetes.io/<role> and node-role.kubernetes.io/<role>=""
+                if 'node-role.kubernetes.io/' in label:
+                    role = label.split('/')[-1]
+                    if role:
+                        roles.append(role)
+                # Also check for control-plane/master specific labels
+                elif label == 'node-role.kubernetes.io/control-plane' or label == 'node-role.kubernetes.io/master':
+                    if 'control-plane' not in roles and 'master' not in roles:
+                        roles.append('control-plane')
+        role_str = ",".join(roles) if roles else "worker"
+
+        # CPU and Memory utilization
+        cpu_str = ""
+        mem_str = ""
+        if node.metadata.name in metrics:
+            node_metrics = metrics[node.metadata.name]
+            cpu_percent = node_metrics['cpu_percent'].rstrip('%')
+            mem_percent = node_metrics['memory_percent'].rstrip('%')
+
+            # Color code based on utilization
+            try:
+                cpu_val = float(cpu_percent)
+                cpu_color = "green" if cpu_val < 70 else "yellow" if cpu_val < 90 else "red"
+                cpu_str = f"[{cpu_color}]CPU:{cpu_percent}%[/]"
+            except ValueError:
+                cpu_str = f"CPU:{cpu_percent}%"
+
+            try:
+                mem_val = float(mem_percent)
+                mem_color = "green" if mem_val < 70 else "yellow" if mem_val < 90 else "red"
+                mem_str = f"[{mem_color}]Mem:{mem_percent}%[/]"
+            except ValueError:
+                mem_str = f"Mem:{mem_percent}%"
+        else:
+            cpu_str = "[dim]CPU:N/A[/]"
+            mem_str = "[dim]Mem:N/A[/]"
+
+        # Format: status • name | pods | cpu | mem | role
+        label_text = f"{status_icon} {self.node_name:<30} [{pod_color}]{pod_count}/{max_pods:>3}[/] {cpu_str:>16} {mem_str:>16} [dim]{role_str:<15}[/]"
+        super().__init__(Label(label_text))
+
+
+class ClusterOverview(ModalScreen[bool]):
+    """Modal screen for displaying cluster overview with node information"""
+
+    CSS = """
+    ClusterOverview {
+        align: center middle;
+        background: black 40%;
+    }
+
+    #overview-dialog {
+        width: 90%;
+        height: 90%;
+        border: round $accent;
+        background: $background;
+        padding: 1 2;
+    }
+
+    #overview-title {
+        height: 1;
+        color: $accent;
+        text-style: bold;
+        padding: 0 0 1 0;
+    }
+
+    #overview-summary {
+        height: auto;
+        border: none;
+        background: transparent;
+        padding: 0 1;
+    }
+
+    #nodes-container {
+        height: 20;
+        margin-top: 1;
+        border: round $accent 40%;
+        background: $surface 30%;
+        border-title-align: left;
+        border-title-color: $text-accent 50%;
+    }
+
+    #nodes-list {
+        height: 1fr;
+        border: none;
+        background: transparent;
+        padding: 0 1;
+    }
+
+    NodeItem {
+        padding: 0 1;
+        height: 1;
+
+        &:hover {
+            background: $boost;
+        }
+    }
+
+    ListView > NodeItem.--highlight {
+        background: $accent 30%;
+    }
+
+    #node-details {
+        height: 1fr;
+        margin-top: 1;
+        border: round $accent 40%;
+        background: $surface 20%;
+        border-title-align: left;
+        border-title-color: $text-accent 50%;
+    }
+
+    #node-details-content {
+        height: 1fr;
+        border: none;
+        background: transparent;
+        padding: 1 2;
+        overflow-y: auto;
+    }
+
+    #overview-help {
+        dock: bottom;
+        height: 1;
+        background: $surface-darken-1;
+        color: $text-muted;
+        padding: 0 2;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", "Close"),
+        Binding("ctrl+c", "close", "Close"),
+        Binding("r", "refresh", "Refresh"),
+        Binding("x", "ssh_node", "SSH"),
+    ]
+
+    def __init__(self, k8s_client: K8sClient):
+        super().__init__()
+        self.k8s_client = k8s_client
+        self.nodes = []
+        self.selected_node = None
+
+    def compose(self) -> ComposeResult:
+        with Container(id="overview-dialog"):
+            yield Static("Cluster Overview", id="overview-title")
+            yield Static(id="overview-summary")
+            with Container(id="nodes-container"):
+                yield ListView(id="nodes-list")
+            with Container(id="node-details"):
+                yield RichLog(id="node-details-content", highlight=True, markup=True)
+            yield Static("↑↓: Navigate | x: SSH | r: Refresh | Esc: Close", id="overview-help")
+
+    def on_mount(self) -> None:
+        """Load and display cluster overview"""
+        self.query_one("#nodes-container").border_title = "Nodes"
+        self.query_one("#node-details").border_title = "Node Details"
+        self.refresh_overview()
+
+    def refresh_overview(self) -> None:
+        """Refresh the cluster overview data"""
+        # Get cluster info
+        cluster_name, _ = self.k8s_client.get_cluster_info()
+
+        # Get nodes
+        self.nodes = self.k8s_client.get_nodes()
+        if not self.nodes:
+            summary = self.query_one("#overview-summary", Static)
+            summary.update("[yellow]No nodes found[/]")
+            return
+
+        # Get metrics and pod counts
+        metrics = self.k8s_client.get_node_metrics()
+        pod_counts = self.k8s_client.get_pod_count_per_node()
+
+        # Update summary
+        total_pods = sum(pod_counts.values())
+        summary = self.query_one("#overview-summary", Static)
+        summary.update(f"[bold cyan]Cluster:[/] {cluster_name}  [bold cyan]Nodes:[/] {len(self.nodes)}  [bold cyan]Total Pods:[/] {total_pods}")
+
+        # Populate nodes list
+        nodes_list = self.query_one("#nodes-list", ListView)
+        nodes_list.clear()
+
+        for node in self.nodes:
+            name = node.metadata.name
+            pod_count = pod_counts.get(name, 0)
+
+            # Get max pods
+            max_pods = 110
+            if node.status.allocatable and 'pods' in node.status.allocatable:
+                max_pods = int(node.status.allocatable['pods'])
+
+            nodes_list.append(NodeItem(node, metrics, pod_count, max_pods))
+
+        # Focus and select first node
+        nodes_list.focus()
+        if len(nodes_list) > 0:
+            nodes_list.index = 0
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        """Handle node selection"""
+        if event.list_view.id == "nodes-list" and isinstance(event.item, NodeItem):
+            self.selected_node = event.item.node
+            self.show_node_details()
+
+    def show_node_details(self) -> None:
+        """Show detailed information about the selected node"""
+        details_content = self.query_one("#node-details-content", RichLog)
+        details_content.clear()
+
+        if not self.selected_node:
+            details_content.write("[dim]No node selected[/]")
+            return
+
+        node = self.selected_node
+
+        # Basic info
+        details_content.write(f"[bold cyan]Name:[/] {node.metadata.name}")
+
+        # IP addresses
+        if node.status.addresses:
+            details_content.write(f"[bold cyan]Addresses:[/]")
+            for addr in node.status.addresses:
+                details_content.write(f"  {addr.type}: [green]{addr.address}[/]")
+        details_content.write("")
+
+        # Status
+        details_content.write(f"[bold cyan]Status:[/]")
+        for cond in node.status.conditions:
+            status_color = "green" if cond.status == "True" else "red"
+            details_content.write(f"  {cond.type}: [{status_color}]{cond.status}[/]")
+        details_content.write("")
+
+        # Version info
+        if node.status.node_info:
+            info = node.status.node_info
+            details_content.write(f"[bold cyan]System Info:[/]")
+            details_content.write(f"  Kubelet: {info.kubelet_version}")
+            details_content.write(f"  OS: {info.operating_system}")
+            details_content.write(f"  OS Image: {info.os_image}")
+            details_content.write(f"  Kernel: {info.kernel_version}")
+            details_content.write(f"  Container Runtime: {info.container_runtime_version}")
+            details_content.write("")
+
+        # Capacity and Allocatable
+        if node.status.capacity:
+            details_content.write(f"[bold cyan]Capacity:[/]")
+            details_content.write(f"  CPU: {node.status.capacity.get('cpu', 'N/A')}")
+            details_content.write(f"  Memory: {node.status.capacity.get('memory', 'N/A')}")
+            details_content.write(f"  Pods: {node.status.capacity.get('pods', 'N/A')}")
+            details_content.write("")
+
+        if node.status.allocatable:
+            details_content.write(f"[bold cyan]Allocatable:[/]")
+            details_content.write(f"  CPU: {node.status.allocatable.get('cpu', 'N/A')}")
+            details_content.write(f"  Memory: {node.status.allocatable.get('memory', 'N/A')}")
+            details_content.write(f"  Pods: {node.status.allocatable.get('pods', 'N/A')}")
+            details_content.write("")
+
+        # Labels
+        if node.metadata.labels:
+            details_content.write(f"[bold cyan]Labels:[/]")
+            for key, value in sorted(node.metadata.labels.items()):
+                details_content.write(f"  [yellow]{key}[/]: {value}")
+
+    def action_refresh(self) -> None:
+        """Refresh the overview"""
+        self.refresh_overview()
+
+    def action_ssh_node(self) -> None:
+        """SSH into the selected node"""
+        if not self.selected_node:
+            return
+
+        node = self.selected_node
+
+        # Get IP address (prefer ExternalIP, fallback to InternalIP)
+        ip_address = None
+        if node.status.addresses:
+            # Try to find ExternalIP first
+            for addr in node.status.addresses:
+                if addr.type == "ExternalIP":
+                    ip_address = addr.address
+                    break
+
+            # Fallback to InternalIP
+            if not ip_address:
+                for addr in node.status.addresses:
+                    if addr.type == "InternalIP":
+                        ip_address = addr.address
+                        break
+
+        if not ip_address:
+            return
+
+        # Exit the TUI temporarily
+        with self.app.suspend():
+            # Colorful banner
+            separator = "─" * 60
+            print(f"\033[36m{separator}\033[0m")
+            print(f"\033[36m→ \033[1;37mSSH to Node\033[0m")
+            print(f"  \033[2mNode:\033[0m \033[32m{node.metadata.name}\033[0m")
+            print(f"  \033[2mIP:\033[0m \033[35m{ip_address}\033[0m")
+            print(f"\033[36m{separator}\033[0m\n")
+
+            # Attempt SSH
+            import subprocess
+            try:
+                subprocess.run(["ssh", ip_address])
+            except Exception as e:
+                print(f"\n\033[31mSSH failed: {e}\033[0m")
+
+            # Exit message
+            print(f"\n\033[36m{separator}\033[0m")
+            print(f"\033[36m← \033[1;37mExited SSH\033[0m")
+            print(f"\033[2mPress \033[0m\033[1;32mEnter\033[0m\033[2m to return to \033[0m\033[1;36mlazyk8s\033[0m\033[2m...\033[0m")
+            print(f"\033[36m{separator}\033[0m")
+            input()
+
+    def action_close(self) -> None:
+        """Close the overview"""
+        self.dismiss(True)
 
 
 class PodItem(ListItem):
@@ -416,8 +956,10 @@ class LazyK8sApp(App):
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh", "Refresh"),
         Binding("n", "change_namespace", "Namespace"),
+        Binding("c", "cluster_overview", "Cluster"),
         Binding("x", "open_shell", "Shell"),
         Binding("f", "toggle_follow", "Follow"),
+        Binding("d", "delete_pod", "Delete"),
         Binding("space", "toggle_container", "Toggle Container", show=False),
         Binding("tab", "focus_next", "Next"),
         # Tab switching
@@ -828,6 +1370,40 @@ class LazyK8sApp(App):
             handle_namespace_selection
         )
 
+    def action_cluster_overview(self) -> None:
+        """Open cluster overview or context selector if multiple contexts"""
+        # Get all contexts
+        contexts, current_context = self.k8s_client.get_contexts()
+
+        # If multiple contexts, show selector first
+        if len(contexts) > 1:
+            def handle_context_selection(selected_context: Optional[str]) -> None:
+                """Handle context selection from modal"""
+                if selected_context and selected_context != current_context.get('name', ''):
+                    # Switch context
+                    success = self.k8s_client.switch_context(selected_context)
+                    if success:
+                        # Refresh everything
+                        self.refresh_status_bar()
+                        self.refresh_pods()
+                        self.selected_pod = None
+                        self.selected_container = None
+                        self.active_containers.clear()
+                        self.refresh_containers()
+                        self.show_pod_info()
+                        self.show_pod_logs()
+
+                # Show cluster overview
+                self.push_screen(ClusterOverview(self.k8s_client))
+
+            self.push_screen(
+                ClusterSelector(contexts, current_context),
+                handle_context_selection
+            )
+        else:
+            # Single context, just show overview
+            self.push_screen(ClusterOverview(self.k8s_client))
+
     def action_view_logs(self) -> None:
         """View logs for selected pod"""
         if self.selected_pod:
@@ -1053,6 +1629,38 @@ class LazyK8sApp(App):
         if self.selected_pod:
             self.show_pod_info()
             self.show_pod_logs()
+
+    def action_delete_pod(self) -> None:
+        """Delete the selected pod after confirmation"""
+        if not self.selected_pod:
+            return
+
+        pod_name = self.selected_pod.metadata.name
+        namespace = self.k8s_client.get_current_namespace()
+
+        def handle_confirmation(confirmed: bool) -> None:
+            """Handle the confirmation response"""
+            if confirmed:
+                # Delete the pod
+                success = self.k8s_client.delete_pod(pod_name)
+                if success:
+                    # Clear selection and refresh immediately
+                    self.selected_pod = None
+                    self.selected_container = None
+                    self.refresh_pods()
+
+                    # Schedule additional refreshes to show the replacement pod
+                    self.set_timer(1.0, self.refresh_pods)
+                    self.set_timer(3.0, self.refresh_pods)
+
+        # Show confirmation dialog
+        self.push_screen(
+            ConfirmDialog(
+                f"Delete pod [b]{pod_name}[/b] in namespace [b]{namespace}[/b]?\n\nThis action cannot be undone.",
+                title="Confirm Pod Deletion"
+            ),
+            handle_confirmation
+        )
 
 
 class Gui:

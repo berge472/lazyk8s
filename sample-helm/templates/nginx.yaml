@@ -1,0 +1,26 @@
+{{- if .Values.nginx.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-test
+  labels:
+    app: nginx
+spec:
+  containers:
+  - name: nginx
+    image: {{ .Values.nginx.image }}
+    ports:
+    - containerPort: {{ .Values.nginx.port }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+spec:
+  selector:
+    app: nginx
+  ports:
+  - protocol: TCP
+    port: {{ .Values.nginx.port }}
+    targetPort: {{ .Values.nginx.port }}
+{{- end }}

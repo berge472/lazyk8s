@@ -1,0 +1,13 @@
+{{- if .Values.busybox.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: busybox-test
+  labels:
+    app: busybox
+spec:
+  containers:
+  - name: busybox
+    image: {{ .Values.busybox.image }}
+    command: ['sh', '-c', 'sleep 3600']
+{{- end }}

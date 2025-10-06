@@ -312,3 +312,94 @@ class K8sClient:
         except Exception as e:
             self.logger.error(f"Failed to get events: {e}")
             return ""
+
+    def get_contexts(self) -> Tuple[List[dict], dict]:
+        """Get all kubeconfig contexts and the current context"""
+        try:
+            contexts, active_context = config.list_kube_config_contexts()
+            return contexts or [], active_context
+        except Exception as e:
+            self.logger.error(f"Failed to get contexts: {e}")
+            return [], {}
+
+    def switch_context(self, context_name: str) -> bool:
+        """Switch to a different kubeconfig context"""
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["kubectl", "config", "use-context", context_name],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                # Reload config to use new context
+                config.load_kube_config()
+                self.core_v1 = client.CoreV1Api()
+                self.api_client = client.ApiClient()
+                self._refresh_namespaces()
+                return True
+            else:
+                self.logger.error(f"Failed to switch context: {result.stderr}")
+                return False
+        except Exception as e:
+            self.logger.error(f"Failed to switch context: {e}")
+            return False
+
+    def get_nodes(self) -> List[client.V1Node]:
+        """Get all nodes in the cluster"""
+        try:
+            nodes = self.core_v1.list_node()
+            return nodes.items
+        except ApiException as e:
+            self.logger.error(f"Failed to list nodes: {e}")
+            return []
+
+    def get_node_metrics(self) -> dict:
+        """Get node metrics from metrics-server if available"""
+        try:
+            import subprocess
+            # Use kubectl top nodes to get metrics
+            result = subprocess.run(
+                ["kubectl", "top", "nodes", "--no-headers"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            if result.returncode == 0:
+                # Parse output: NAME CPU(cores) CPU% MEMORY(bytes) MEMORY%
+                metrics = {}
+                for line in result.stdout.strip().split("\n"):
+                    if line:
+                        parts = line.split()
+                        if len(parts) >= 5:
+                            node_name = parts[0]
+                            metrics[node_name] = {
+                                "cpu_cores": parts[1],
+                                "cpu_percent": parts[2],
+                                "memory_bytes": parts[3],
+                                "memory_percent": parts[4]
+                            }
+                return metrics
+            else:
+                self.logger.warning(f"Metrics-server not available: {result.stderr}")
+                return {}
+        except Exception as e:
+            self.logger.warning(f"Failed to get node metrics: {e}")
+            return {}
+
+    def get_pod_count_per_node(self) -> dict:
+        """Get count of pods on each node"""
+        try:
+            pods = self.core_v1.list_pod_for_all_namespaces()
+            pod_counts = {}
+            for pod in pods.items:
+                node_name = pod.spec.node_name
+                if node_name:
+                    pod_counts[node_name] = pod_counts.get(node_name, 0) + 1
+            return pod_counts
+        except ApiException as e:
+            self.logger.error(f"Failed to count pods per node: {e}")
+            return {}

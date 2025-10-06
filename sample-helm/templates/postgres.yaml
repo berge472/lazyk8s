@@ -1,0 +1,31 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: postgres-test
+  labels:
+    app: postgres
+spec:
+  containers:
+  - name: postgres
+    image: {{ .Values.postgres.image }}
+    ports:
+    - containerPort: {{ .Values.postgres.port }}
+    env:
+    {{- range $key, $value := .Values.postgres.env }}
+    - name: {{ $key }}
+      value: {{ $value | quote }}
+    {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-service
+spec:
+  selector:
+    app: postgres
+  ports:
+  - protocol: TCP
+    port: {{ .Values.postgres.port }}
+    targetPort: {{ .Values.postgres.port }}
+{{- end }}

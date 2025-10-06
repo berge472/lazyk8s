@@ -1,0 +1,36 @@
+replicaCount: 1
+
+nginx:
+  enabled: true
+  image: nginx:latest
+  port: 80
+
+redis:
+  enabled: true
+  image: redis:latest
+  port: 6379
+
+postgres:
+  enabled: true
+  image: postgres:latest
+  port: 5432
+  env:
+    POSTGRES_PASSWORD: testpassword
+    POSTGRES_DB: testdb
+
+mongodb:
+  enabled: true
+  image: mongo:latest
+  port: 27017
+
+busybox:
+  enabled: true
+  image: busybox:latest
+
+multiContainer:
+  enabled: true
+  appImage: nginx:alpine
+  appPort: 80
+  sidecarImage: busybox:latest
+  metricsImage: busybox:latest
+  metricsPort: 9090
