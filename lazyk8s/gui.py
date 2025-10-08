@@ -20,6 +20,8 @@ from .k8s_client import K8sClient
 from .config import AppConfig
 from . import __version__
 
+from lazyk8s.helpers.formatHelper import alignText
+
 
 class StatusBar(Static):
     """Status bar displaying cluster info"""
@@ -119,6 +121,102 @@ class ConfirmDialog(ModalScreen[bool]):
     def action_cancel(self) -> None:
         """Cancel action"""
         self.dismiss(False)
+
+
+class UsernameInputDialog(ModalScreen[Optional[str]]):
+    """Modal screen for inputting SSH username"""
+
+    CSS = """
+    UsernameInputDialog {
+        align: center middle;
+        background: black 40%;
+    }
+
+    #username-dialog {
+        width: 60;
+        height: auto;
+        border: round $primary;
+        background: $background;
+        padding: 1 2;
+    }
+
+    #username-title {
+        width: 100%;
+        height: 1;
+        content-align: center middle;
+        color: $primary;
+        text-style: bold;
+        padding: 0 0 1 0;
+    }
+
+    #username-label {
+        width: 100%;
+        height: auto;
+        padding: 1 0 0 0;
+    }
+
+    #username-input {
+        width: 100%;
+        margin: 1 0;
+    }
+
+    #username-buttons {
+        width: 100%;
+        height: auto;
+        align: center middle;
+        padding: 1 0;
+    }
+
+    #username-buttons Button {
+        margin: 0 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+    ]
+
+    def __init__(self, node_name: str):
+        super().__init__()
+        self.node_name = node_name
+
+    def compose(self) -> ComposeResult:
+        with Container(id="username-dialog"):
+            yield Static("SSH Connection", id="username-title")
+            yield Static(f"Enter username for node: {self.node_name}", id="username-label")
+            yield Input(placeholder="Username (e.g., ubuntu, admin)", id="username-input")
+            with Horizontal(id="username-buttons"):
+                yield Button("Connect", variant="primary", id="username-connect")
+                yield Button("Cancel", variant="default", id="username-cancel")
+
+    def on_mount(self) -> None:
+        """Focus the input field on mount"""
+        self.query_one("#username-input", Input).focus()
+
+    @on(Input.Submitted, "#username-input")
+    def on_input_submitted(self) -> None:
+        """Handle Enter key press in the input field"""
+        username = self.query_one("#username-input", Input).value.strip()
+        if username:
+            self.dismiss(username)
+
+    @on(Button.Pressed, "#username-connect")
+    def on_connect(self) -> None:
+        """User wants to connect"""
+        username = self.query_one("#username-input", Input).value.strip()
+        if username:
+            self.dismiss(username)
+        else:
+            self.query_one("#username-input", Input).focus()
+
+    @on(Button.Pressed, "#username-cancel")
+    def on_cancel(self) -> None:
+        """User cancelled"""
+        self.dismiss(None)
+
+    def action_cancel(self) -> None:
+        """Cancel action"""
+        self.dismiss(None)
 
 
 class NamespaceSelector(ModalScreen[Optional[str]]):
@@ -420,22 +518,25 @@ class NodeItem(ListItem):
             try:
                 cpu_val = float(cpu_percent)
                 cpu_color = "green" if cpu_val < 70 else "yellow" if cpu_val < 90 else "red"
-                cpu_str = f"[{cpu_color}]CPU:{cpu_percent}%[/]"
+                cpu_str = f"[{cpu_color}]" + alignText(f"CPU:{cpu_percent}%", 12) + "[/]"
             except ValueError:
-                cpu_str = f"CPU:{cpu_percent}%"
+                cpu_str = alignText(f"CPU:{cpu_percent}%", 12)
 
             try:
                 mem_val = float(mem_percent)
                 mem_color = "green" if mem_val < 70 else "yellow" if mem_val < 90 else "red"
-                mem_str = f"[{mem_color}]Mem:{mem_percent}%[/]"
+                mem_str = f"[{mem_color}]"+ alignText(f"Mem:{mem_percent}%", 12) + "[/]"
             except ValueError:
-                mem_str = f"Mem:{mem_percent}%"
+                mem_str = alignText(f"Mem:{mem_percent}%", 12)
         else:
-            cpu_str = "[dim]CPU:N/A[/]"
-            mem_str = "[dim]Mem:N/A[/]"
+            cpu_str = f"[dim]" + alignText("CPU:N/A", 12) + "[/]"
+            mem_str = f"[dim]" + alignText("Mem:N/A", 12) + "[/]"
+
+        podStr = alignText(f"{pod_count}/{max_pods}", 12, alignment='right')
+        nameStr = alignText(self.node_name, 30, alignment='left', trimFromFront=True)
 
         # Format: status • name | pods | cpu | mem | role
-        label_text = f"{status_icon} {self.node_name:<30} [{pod_color}]{pod_count}/{max_pods:>3}[/] {cpu_str:>16} {mem_str:>16} [dim]{role_str:<15}[/]"
+        label_text = f"{status_icon} {nameStr} {podStr}   {cpu_str} {mem_str} [dim]{role_str}[/]"
         super().__init__(Label(label_text))
 
 
@@ -665,7 +766,7 @@ class ClusterOverview(ModalScreen[bool]):
         """Refresh the overview"""
         self.refresh_overview()
 
-    def action_ssh_node(self) -> None:
+    async def action_ssh_node(self) -> None:
         """SSH into the selected node"""
         if not self.selected_node:
             return
@@ -691,6 +792,14 @@ class ClusterOverview(ModalScreen[bool]):
         if not ip_address:
             return
 
+        # Show username input dialog
+        username = await self.app.push_screen(
+            UsernameInputDialog(node.metadata.name)
+        )
+
+        if not username:
+            return  # User cancelled
+
         # Exit the TUI temporarily
         with self.app.suspend():
             # Colorful banner
@@ -698,13 +807,14 @@ class ClusterOverview(ModalScreen[bool]):
             print(f"\033[36m{separator}\033[0m")
             print(f"\033[36m→ \033[1;37mSSH to Node\033[0m")
             print(f"  \033[2mNode:\033[0m \033[32m{node.metadata.name}\033[0m")
+            print(f"  \033[2mUser:\033[0m \033[33m{username}\033[0m")
             print(f"  \033[2mIP:\033[0m \033[35m{ip_address}\033[0m")
             print(f"\033[36m{separator}\033[0m\n")
 
             # Attempt SSH
             import subprocess
             try:
-                subprocess.run(["ssh", ip_address])
+                subprocess.run(["ssh", f"{username}@{ip_address}"])
             except Exception as e:
                 print(f"\n\033[31mSSH failed: {e}\033[0m")
 
