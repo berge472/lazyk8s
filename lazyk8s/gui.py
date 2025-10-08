@@ -85,6 +85,9 @@ class ConfirmDialog(ModalScreen[bool]):
         Binding("escape", "cancel", "Cancel"),
         Binding("n", "cancel", "No"),
         Binding("y", "confirm", "Yes"),
+        # Vim navigation
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
     ]
 
     def __init__(self, message: str, title: str = "Confirm"):
@@ -174,6 +177,9 @@ class UsernameInputDialog(ModalScreen[Optional[str]]):
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
+        # Vim navigation
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
     ]
 
     def __init__(self, node_name: str):
@@ -277,6 +283,9 @@ class NamespaceSelector(ModalScreen[Optional[str]]):
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
         Binding("ctrl+c", "cancel", "Cancel"),
+        # Vim navigation
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
     ]
 
     def __init__(self, namespaces: List[str], current_namespace: str):
@@ -290,7 +299,7 @@ class NamespaceSelector(ModalScreen[Optional[str]]):
         with Container(id="namespace-dialog"):
             yield Static("Filter: ", id="namespace-filter-display")
             yield ListView(id="namespace-list")
-            yield Static("↑↓: Navigate | Enter: Select | Esc: Cancel | Type to filter", id="namespace-help")
+            yield Static("↑↓/jk: Navigate | Enter: Select | Esc: Cancel | Type to filter", id="namespace-help")
 
     def on_mount(self) -> None:
         """Focus the list when mounted"""
@@ -349,9 +358,9 @@ class NamespaceSelector(ModalScreen[Optional[str]]):
                 event.prevent_default()
             return
 
-        # Ignore special keys
+        # Ignore special keys (including vim navigation)
         if key in ["escape", "enter", "up", "down", "left", "right", "tab",
-                   "home", "end", "pageup", "pagedown", "ctrl+c"]:
+                   "home", "end", "pageup", "pagedown", "ctrl+c", "j", "k", "h", "l"]:
             return
 
         # Handle character input (single char keys)
@@ -436,6 +445,9 @@ class ClusterSelector(ModalScreen[Optional[str]]):
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
         Binding("ctrl+c", "cancel", "Cancel"),
+        # Vim navigation
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
     ]
 
     def __init__(self, contexts: List[dict], current_context: dict):
@@ -447,7 +459,7 @@ class ClusterSelector(ModalScreen[Optional[str]]):
         with Container(id="cluster-dialog"):
             yield Static("Select Cluster Context", id="cluster-title")
             yield ListView(id="cluster-list")
-            yield Static("↑↓: Navigate | Enter: Select | Esc: Cancel", id="cluster-help")
+            yield Static("↑↓/jk: Navigate | Enter: Select | Esc: Cancel", id="cluster-help")
 
     def on_mount(self) -> None:
         """Populate the context list when mounted"""
@@ -631,6 +643,9 @@ class ClusterOverview(ModalScreen[bool]):
         Binding("ctrl+c", "close", "Close"),
         Binding("r", "refresh", "Refresh"),
         Binding("x", "ssh_node", "SSH"),
+        # Vim navigation
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
     ]
 
     def __init__(self, k8s_client: K8sClient):
@@ -647,7 +662,7 @@ class ClusterOverview(ModalScreen[bool]):
                 yield ListView(id="nodes-list")
             with Container(id="node-details"):
                 yield RichLog(id="node-details-content", highlight=True, markup=True)
-            yield Static("↑↓: Navigate | x: SSH | r: Refresh | Esc: Close", id="overview-help")
+            yield Static("↑↓/jk: Navigate | x: SSH | r: Refresh | Esc: Close", id="overview-help")
 
     def on_mount(self) -> None:
         """Load and display cluster overview"""
@@ -1072,11 +1087,16 @@ class LazyK8sApp(App):
         Binding("d", "delete_pod", "Delete"),
         Binding("space", "toggle_container", "Toggle Container", show=False),
         Binding("tab", "focus_next", "Next"),
-        # Tab switching
-        Binding("l", "switch_tab('logs-tab')", "Logs", show=False),
-        Binding("e", "switch_tab('events-tab')", "Events", show=False),
-        Binding("m", "switch_tab('metadata-tab')", "Metadata", show=False),
-        # Horizontal scrolling for log panels
+        # Tab switching (capital letters)
+        Binding("L", "switch_tab('logs-tab')", "Logs", show=False),
+        Binding("E", "switch_tab('events-tab')", "Events", show=False),
+        Binding("M", "switch_tab('metadata-tab')", "Metadata", show=False),
+        # Vim navigation
+        Binding("h", "scroll_log_left", "Scroll Left", show=False),
+        Binding("l", "scroll_log_right", "Scroll Right", show=False),
+        Binding("j", "cursor_down", "Down", show=False),
+        Binding("k", "cursor_up", "Up", show=False),
+        # Arrow keys (keep existing)
         Binding("left", "scroll_log_left", "Scroll Left", show=False),
         Binding("right", "scroll_log_right", "Scroll Right", show=False),
     ]
@@ -1594,6 +1614,24 @@ class LazyK8sApp(App):
         except Exception:
             pass
 
+    def action_cursor_down(self) -> None:
+        """Move cursor down in focused list"""
+        try:
+            focused = self.focused
+            if isinstance(focused, ListView):
+                focused.action_cursor_down()
+        except Exception:
+            pass
+
+    def action_cursor_up(self) -> None:
+        """Move cursor up in focused list"""
+        try:
+            focused = self.focused
+            if isinstance(focused, ListView):
+                focused.action_cursor_up()
+        except Exception:
+            pass
+
     def on_key(self, event) -> None:
         """Handle key presses for custom navigation"""
         key = event.key
@@ -1602,12 +1640,12 @@ class LazyK8sApp(App):
 
         # When pods panel is focused
         if self.focused == pods_list:
-            # Left/right arrows cycle through containers
-            if key in ["left", "right"]:
+            # Left/right arrows or h/l cycle through containers
+            if key in ["left", "right", "h", "l"]:
                 if len(containers_list) > 0:
-                    if key == "right":
+                    if key in ["right", "l"]:
                         containers_list.action_cursor_down()
-                    else:  # left
+                    else:  # left or h
                         containers_list.action_cursor_up()
                     event.prevent_default()
                     event.stop()
@@ -1627,8 +1665,8 @@ class LazyK8sApp(App):
 
             # Check if the focused widget is the TabbedContent or any of its children
             if self.focused == logs_tabs or (self.focused and self.focused in logs_tabs.query("*")):
-                if key in ["left", "right"]:
-                    if key == "left":
+                if key in ["left", "right", "h", "l"]:
+                    if key in ["left", "h"]:
                         self.action_scroll_log_left()
                     else:
                         self.action_scroll_log_right()
