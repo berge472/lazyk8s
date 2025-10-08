@@ -5,7 +5,7 @@ The lazier way to manage Kubernetes - Python edition
 
 A terminal UI for managing Kubernetes clusters with ease.
 
-.. image:: screenshot.png
+.. image:: https://raw.githubusercontent.com/berge472/lazyk8s/main/screenshot.png
    :alt: lazyk8s screenshot
 
 Features
