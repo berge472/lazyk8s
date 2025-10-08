@@ -29,7 +29,7 @@ Usage
 
 .. code-block:: bash
 
-   lazyk8s
+   lazyk8s <namespace> 
 
 Requirements
 ------------
@@ -43,7 +43,7 @@ Development
 
 .. code-block:: bash
 
-   pip install -e ".[dev]"
+   pip install -e . 
 
 Acknowledgements
 ----------------
